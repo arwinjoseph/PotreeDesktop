@@ -1,4 +1,79 @@
 
+export async function loadDroppedShapefile(shpPath){
+	const fileName = shpPath.replace(/\\/g, "/").split("/").reverse()[0];
+	console.log("fileName", fileName);
+
+	const shapeNode = new THREE.Object3D();
+	viewer.scene.scene.add(shapeNode);
+	const loader = new Potree.ShapefileLoader();
+	let colorList = [
+		"aliceblue",	//0
+		"antiquewhite",	//1
+		"aqua",	//2
+		"aquamarine",	//3
+		"azure",	//4
+		"beige",	//5
+		"bisque",	//6
+		"blanchedalmond",	//7
+		"blue",	//8
+		"blueviolet",	//9
+		"cornflowerblue",	//10
+		"cornsilk",	//11
+		"crimson",	//12
+		"cyan",	//13
+		"darkblue",	//14
+		"darkcyan",	//15
+		"darkgoldenrod",	//16
+
+		"purple",	//17
+		"royalblue",	//18
+		"salmon",	//19
+		"sienna",	//20
+		"silver",	//21
+		"slateblue",	//22
+		"slategrey",	//23
+		"springgreen",	//24
+		"steelblue",	//25
+		"tan",	//26
+		"tomato",	//27
+		"yellow",	//28
+
+		"khaki",	//29
+		"magenta",	//30
+
+		"yellowgreen",	//31
+	];
+
+	let shpObject = await loader.load(shpPath);
+	console.log("properties:", shpObject.features[0].properties);
+	let colorStyle = shpObject.features[0].properties.Color;
+	if(colorStyle >= colorList.length) colorStyle = colorList.length-1;
+	//createMeasures(shpObject.features);
+	shpObject.node.traverse(node => {
+		if(node.material){
+			if(!(node instanceof THREE.Mesh)) {
+				node.material.color.setStyle(colorList[colorStyle]);
+			}
+		}
+	});
+	shapeNode.add(shpObject.node);
+	
+	viewer.onGUILoaded(() => {
+		// Add entry to object list in sidebar
+		let tree = $(`#jstree_scene`);
+		let parentNode = "shp";//"other";
+
+		let shpID = tree.jstree('create_node', parentNode, { 
+			"text": `${fileName}`, 
+			"icon": `${Potree.resourcePath}/icons/triangle.svg`,
+			"object": shpObject.node,
+			"data": shpObject.node,
+		}, 
+		"last", false, false);
+		tree.jstree(shpObject.node.visible ? "check_node" : "uncheck_node", shpID);
+	});
+}
+
 export function loadDroppedPointcloud(cloudjsPath){
 	const folderName = cloudjsPath.replace(/\\/g, "/").split("/").reverse()[1];
 
@@ -18,7 +93,9 @@ export function loadDroppedPointcloud(cloudjsPath){
 		}
 
 		material.size = 1;
-		material.pointSizeType = Potree.PointSizeType.ADAPTIVE;
+		material.pointSizeType = Potree.PointSizeType.FIXED;
+		material.activeAttributeName = "intensity";
+		material.shape = Potree.PointShape.CIRCLE;
 
 		viewer.zoomTo(e.pointcloud);
 	});
@@ -436,6 +513,7 @@ export async function dropHandler(event){
 
 	const cloudJsFiles = [];
 	const lasLazFiles = [];
+	const shpFiles = [];
 
 	let suggestedDirectory = null;
 	let suggestedName = null;
@@ -455,6 +533,7 @@ export async function dropHandler(event){
 		const np = require('path');
 
 		const whitelist = [".las", ".laz"];
+		const shplist = [".shp"];
 
 		let isFile = fs.lstatSync(path).isFile();
 
@@ -472,6 +551,8 @@ export async function dropHandler(event){
 					suggestedDirectory = np.normalize(`${path}/..`);
 					suggestedName = np.basename(path, np.extname(path)) + "_converted";
 				}
+			}else if(shplist.includes(extension)) {
+				shpFiles.push(file.path);
 			}
 		}else if(fs.lstatSync(path).isDirectory()){
 			// handle directory
@@ -514,6 +595,10 @@ export async function dropHandler(event){
 
 	for(const cloudjs of cloudJsFiles){
 		loadDroppedPointcloud(cloudjs);
+	}
+
+	for(const shp of shpFiles){
+		loadDroppedShapefile(shp);
 	}
 
 	return false;

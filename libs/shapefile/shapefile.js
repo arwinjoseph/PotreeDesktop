@@ -97,7 +97,7 @@ var slice_slice = function(length) {
   return (function read() {
     return that._source.read().then(function(result) {
 
-      // When done, it’s possible the request wasn’t fully fullfilled!
+      // When done, itâ€™s possible the request wasnâ€™t fully fullfilled!
       // If so, the pre-allocated array is too big and needs slicing.
       if (result.done) {
         that._array = empty;
@@ -185,7 +185,9 @@ var view = function(array) {
 
 var dbf = function(source, decoder) {
   source = slice(source);
+  //console.log("dbf.slice(source):",source);
   return source.slice(32).then(function(array) {
+	//console.log("dbf.slice(source).slice(32):",array);
     var head = view(array);
     return source.slice(head.getUint16(8, true) - 32).then(function(array) {
       return new Dbf(source, decoder, head, view(array));
@@ -194,6 +196,7 @@ var dbf = function(source, decoder) {
 };
 
 function Dbf(source, decoder, head, body) {
+  //console.log("Dbf(source,decoder,head,body):",source);
   this._source = source;
   this._decode = decoder.decode.bind(decoder);
   this._recordLength = head.getUint16(10, true);
@@ -235,8 +238,12 @@ var readPolygon = function(record) {
   for (j = 0; j < n; ++j, i += 4) parts[j] = record.getInt32(i, true);
   for (j = 0; j < m; ++j, i += 16) points[j] = [record.getFloat64(i, true), record.getFloat64(i + 8, true)];
 
+  //console.log("points:", points);
+  //console.log("parts:", parts);
   parts.forEach(function(i, j) {
+	//console.log("i,j:", i,",",j);
     var ring = points.slice(i, parts[j + 1]);
+	//console.log("ring:", ring);
     if (ringClockwise(ring)) polygons.push([ring]);
     else holes.push(ring);
   });
@@ -305,13 +312,68 @@ var readPolyLine = function(record) {
       : {type: "MultiLineString", coordinates: parts.map(function(i, j) { return points.slice(i, parts[j + 1]); })};
 };
 
+var readMultiPointZ = function(record) {
+  var i = 40, j, n = record.getInt32(36, true), coordinates = new Array(n);
+  for (j = 0; j < n; ++j, i += 24) coordinates[j] = [record.getFloat64(i, true), record.getFloat64(i + 8, true), record.getFloat64(i + 16, true)];
+  return {type: "MultiPointZ", coordinates: coordinates};
+};
+
+var readPointZ = function(record) {
+  return {type: "PointZ", coordinates: [record.getFloat64(4, true), record.getFloat64(12, true), record.getFloat64(20, true)]};
+};
+
+var readPolyLineZ = function(record) {
+  var i = 44, j, n = record.getInt32(36, true), m = record.getInt32(40, true), parts = new Array(n), points = new Array(m);
+  for (j = 0; j < n; ++j, i += 4) parts[j] = record.getInt32(i, true);
+  for (j = 0; j < m; ++j, i += 16) points[j] = [record.getFloat64(i, true), record.getFloat64(i + 8, true)];
+  // Advance two doubles (z min, z max)
+  i += 16;
+  for (j = 0; j < m; ++j, i += 8) points[j].push(record.getFloat64(i, true));
+  return n === 1
+      ? {type: "LineStringZ", coordinates: points}
+      : {type: "MultiLineStringZ", coordinates: parts.map(function(i, j) { return points.slice(i, parts[j + 1]); })};
+};
+
+var readPolygonZ = function(record) {
+  var i = 44, j, n = record.getInt32(36, true), m = record.getInt32(40, true), parts = new Array(n), points = new Array(m), polygons = [], holes = [];
+  for (j = 0; j < n; ++j, i += 4) parts[j] = record.getInt32(i, true);
+  for (j = 0; j < m; ++j, i += 16) points[j] = [record.getFloat64(i, true), record.getFloat64(i + 8, true)];
+  // Advance two doubles (z min, z max)
+  i += 16;
+  for (j = 0; j < m; ++j, i += 8) points[j].push(record.getFloat64(i, true));
+
+  parts.forEach(function(i, j) {
+    var ring = points.slice(i, parts[j + 1]);
+    if (ringClockwise(ring)) polygons.push([ring]);
+    else holes.push(ring);
+  });
+
+  holes.forEach(function(hole) {
+    polygons.some(function(polygon) {
+      if (ringContainsSome(polygon[0], hole)) {
+        polygon.push(hole);
+        return true;
+      }
+    }) || polygons.push([hole]);
+  });
+
+  return polygons.length === 1
+      ? {type: "PolygonZ", coordinates: polygons[0]}
+      : {type: "MultiPolygonZ", coordinates: polygons};
+};
+
 var shp_read = function() {
   var that = this;
+  //console.log("shp_read:", that._source);
   return that._source.slice(8).then(function(array) {
     if (array == null) return {done: true, value: undefined};
     var header = view(array);
+	//console.log("shp_read.header.getInt32(4, false) * 2",header.getInt32(4, false) * 2);
+	if(header.getInt32(4, false) == 0) return {done: true, value: undefined};
     return that._source.slice(header.getInt32(4, false) * 2).then(function(array) {
       var record = view(array);
+	  //console.log("shp_read.record",record);
+	  //console.log("shp_read.record.getInt32(0, true)", record.getInt32(0, true));
       return {done: false, value: record.getInt32(0, true) ? that._type(record) : readNull()};
     });
   });
@@ -323,25 +385,29 @@ var types$1 = {
   3: readPolyLine,
   5: readPolygon,
   8: readMultiPoint,
-  11: readPoint,
-  13: readPolyLine,
-  15: readPolygon,
-  18: readMultiPoint
+  11: readPointZ,
+  13: readPolyLineZ,
+  15: readPolygonZ,
+  18: readMultiPointZ
 };
 
 var shp = function(source) {
   source = slice(source);
+  //console.log("shp.slice(source):",source);
   return source.slice(100).then(function(array) {
+	//console.log("shp.slice(source).slice(100):",array);
     return new Shp(source, view(array));
   });
 };
 
 function Shp(source, header) {
+  //console.log("Shp(source, header):",source, header);
   var type = header.getInt32(32, true);
   if (!(type in types$1)) throw new Error("unsupported shape type: " + type);
   this._source = source;
   this._type = types$1[type];
   this.bbox = [header.getFloat64(36, true), header.getFloat64(44, true), header.getFloat64(52, true), header.getFloat64(60, true)];
+  //console.log("Shp()-this:",this);
 }
 
 var prototype$2 = Shp.prototype;
@@ -359,6 +425,7 @@ var shapefile_cancel = function() {
 
 var shapefile_read = function() {
   var that = this;
+  console.log("shapefile_read:",that);
   return Promise.all([
     that._dbf ? that._dbf.read() : {value: {}},
     that._shp.read()
@@ -376,15 +443,18 @@ var shapefile_read = function() {
 };
 
 var shapefile = function(shpSource, dbfSource, decoder) {
+  //console.log("shapefile()");
   return Promise.all([
     shp(shpSource),
     dbfSource && dbf(dbfSource, decoder)
   ]).then(function(sources) {
+    //console.log("shapefile().Promise().then()");
     return new Shapefile(sources[0], sources[1]);
   });
 };
 
 function Shapefile(shp$$1, dbf$$1) {
+  //console.log("Shapefile(): set ._shp, ._dbf, .bbox");
   this._shp = shp$$1;
   this._dbf = dbf$$1;
   this.bbox = shp$$1.bbox;
@@ -413,6 +483,7 @@ function open(shp$$1, dbf$$1, options) {
     shp$$1 = stream(shp$$1);
   }
   return Promise.all([shp$$1, dbf$$1]).then(function(sources) {
+    //console.log("shapefile.open().Promise.then()");
     var shp$$1 = sources[0], dbf$$1 = sources[1], encoding = "windows-1252";
     if (options && options.encoding != null) encoding = options.encoding;
     return shapefile(shp$$1, dbf$$1, dbf$$1 && new TextDecoder(encoding));
@@ -449,9 +520,12 @@ function openDbf(source, options) {
 }
 
 function read(shp$$1, dbf$$1, options) {
+  //console.log("shapefile.read()");
   return open(shp$$1, dbf$$1, options).then(function(source) {
+  	//console.log("shapefile.read.open.then()");
     var features = [], collection = {type: "FeatureCollection", features: features, bbox: source.bbox};
     return source.read().then(function read(result) {
+  	  //console.log("shapefile.read.open.then().read.then()");
       if (result.done) return collection;
       features.push(result.value);
       return source.read().then(read);

@@ -1,14 +1,15 @@
 
 export async function loadDroppedShapefile(shpPath){
-	const fileName = shpPath.replace(/\\/g, "/").split("/").reverse()[0];
+	let fileName = shpPath.replace(/\\/g, "/").split("/").reverse()[0];
+	fileName = fileName.substring(0, fileName.lastIndexOf('.'));
 	console.log("fileName", fileName);
 
 	const shapeNode = new THREE.Object3D();
 	viewer.scene.scene.add(shapeNode);
 	const loader = new Potree.ShapefileLoader();
 	let colorList = [
-		"aliceblue",	//0
-		"antiquewhite",	//1
+		//"aliceblue",	//0
+		//"antiquewhite",	//1
 		"aqua",	//2
 		"aquamarine",	//3
 		"azure",	//4
@@ -44,44 +45,110 @@ export async function loadDroppedShapefile(shpPath){
 		"yellowgreen",	//31
 	];
 
+	let createFeatureFolder = (name)=> {
+		let tree = $(`#jstree_scene`);
+		let parentNode = "shpfiles";
+
+		tree.jstree("deselect_all");
+		let nodeID = tree.jstree('create_node', parentNode, { 
+				"text": `${name}`, 
+				"state": {"checked": true},
+				"type": 'folder',
+			}, 
+			"last", false, false);
+		tree.jstree("select_node", nodeID);
+	}
+
+	let createShpfiles = (name, features)=> {
+		createFeatureFolder(name);
+
+		for(let i=0; i<features.length; i++) {
+			let points = [];
+			let polySize = 0;
+			console.log("features[",i,"].type:", features[i].geometry.type);
+			if(features[i].geometry.type === "PolygonZ") {
+				polySize = features[i].geometry.coordinates.length;
+				points = features[i].geometry.coordinates[0];
+			}else if(features[i].geometry.type === "PointZ") {
+				points = [features[i].geometry.coordinates];
+			}else{
+				points = features[i].geometry.coordinates;
+			}
+
+			let shpfile = new Potree.Shpfile();
+			if(features[i].properties.name !== undefined){
+				shpfile.name = features[i].properties.name
+			}else if(features[i].properties.id !== undefined){
+				shpfile.name = name+"_"+features[i].properties.id;
+			}else{
+				shpfile.name = name+"_"+i;
+			}
+			shpfile.closed = false; //noclose line
+			// check close area
+			if((points.length >= 4)
+				&&(points[0][0] == points[points.length-1][0])
+				&&(points[0][1] == points[points.length-1][1])
+				&&(points[0][2] == points[points.length-1][2])) {
+					shpfile.closed = true;
+			}
+			if(points.length === 1) {
+				//shpfile.addMarker(new THREE.Vector3(...points[0]), false , true);
+				shpfile.addMarker(new THREE.Vector3(...points[0]), true , true);
+			} else {
+				for(let j=0; j<points.length; j++) {
+					if((shpfile.closed)&&(j == points.length-1)) {
+						break; // area ignore last point
+					} else {
+						//shpfile.addMarker(new THREE.Vector3(...points[j]));
+						shpfile.addMarker(new THREE.Vector3(...points[j]), true);
+					}
+				}
+			}
+			shpfile.createAttrByObject(features[i].properties);
+			shpfile.setAllSphereEvent('remove');
+			viewer.scene.addShpfile(shpfile);
+		}
+	}
+	let createShapefileAll = (shpObject)=> {
+		let colorStyle = shpObject.features[0].properties.Color;
+		if(colorStyle >= colorList.length) colorStyle = colorList.length-1;
+		shpObject.node.traverse(node => {
+			if(node.material){
+				if(typeof node.material.color != 'undefined') {
+					node.material.color.setStyle(colorList[colorStyle]);
+				}
+			}
+		});
+		shapeNode.add(shpObject.node);
+		
+		viewer.onGUILoaded(() => {
+			// Add entry to object list in sidebar
+			let tree = $(`#jstree_scene`);
+			let parentNode = "shpAll";//"other";
+
+			let shpID = tree.jstree('create_node', parentNode, { 
+				"text": `${fileName}`, 
+				"icon": `${Potree.resourcePath}/icons/triangle.svg`,
+				"object": shpObject.node,
+				"data": shpObject.node,
+			}, 
+			"last", false, false);
+			tree.jstree(shpObject.node.visible ? "check_node" : "uncheck_node", shpID);
+		});
+	}
+
 	let shpObject = await loader.load(shpPath);
 	console.log("properties:", shpObject.features[0].properties);
-	let colorStyle = shpObject.features[0].properties.Color;
-	if(colorStyle >= colorList.length) colorStyle = colorList.length-1;
-	//createMeasures(shpObject.features);
-	shpObject.node.traverse(node => {
-		if(node.material){
-			if(!(node instanceof THREE.Mesh)) {
-				node.material.color.setStyle(colorList[colorStyle]);
-			}
-		}
-	});
-	shapeNode.add(shpObject.node);
-	
-	viewer.onGUILoaded(() => {
-		// Add entry to object list in sidebar
-		let tree = $(`#jstree_scene`);
-		let parentNode = "shp";//"other";
-
-		let shpID = tree.jstree('create_node', parentNode, { 
-			"text": `${fileName}`, 
-			"icon": `${Potree.resourcePath}/icons/triangle.svg`,
-			"object": shpObject.node,
-			"data": shpObject.node,
-		}, 
-		"last", false, false);
-		tree.jstree(shpObject.node.visible ? "check_node" : "uncheck_node", shpID);
-	});
+	createShpfiles(fileName, shpObject.features);
+	//createShapefileAll(shpObject);
 }
 
 export function loadDroppedPointcloud(cloudjsPath){
 	const folderName = cloudjsPath.replace(/\\/g, "/").split("/").reverse()[1];
 
-	Potree.loadPointCloud(cloudjsPath).then(e => {
+	Potree.loadPointCloud(cloudjsPath, folderName, e => {
 		let pointcloud = e.pointcloud;
 		let material = pointcloud.material;
-
-		pointcloud.name = folderName;
 
 		viewer.scene.addPointCloud(pointcloud);
 
@@ -94,8 +161,11 @@ export function loadDroppedPointcloud(cloudjsPath){
 
 		material.size = 1;
 		material.pointSizeType = Potree.PointSizeType.FIXED;
-		material.activeAttributeName = "intensity";
 		material.shape = Potree.PointShape.CIRCLE;
+		material.activeAttributeName = "intensity";
+		let attribute = pointcloud.getAttribute("intensity");
+		material.intensityRange = [123, 456];
+		material.intensityRange = attribute.range;
 
 		viewer.zoomTo(e.pointcloud);
 	});
@@ -330,11 +400,9 @@ export function convert_20(inputPaths, chosenPath, pointcloudName){
 		let message = `conversion finished, now loading ${cloudJS}`;
 		viewer.postMessage(message, {duration: 15000});
 
-		Potree.loadPointCloud(cloudJS).then(e => {
+		Potree.loadPointCloud(cloudJS, pointcloudName, e => {
 			let pointcloud = e.pointcloud;
 			let material = pointcloud.material;
-
-			pointcloud.name = pointcloudName;
 
 			let hasRGBA = pointcloud.getAttributes().attributes.find(a => a.name === "rgba") !== undefined
 			if(hasRGBA){

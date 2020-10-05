@@ -18593,7 +18593,7 @@ function justType(type, TYPE, just3D) {
             var multiProperties = ofDimension.map(justPropsMulti);
             properties = [].concat.apply([], multiProperties);
         } else {
-            geometries = (TYPE === 'POLYGON' || TYPE === 'POLYLINE' || TYPE === 'POLYGONZ' || TYPE === 'POLYLINEZ') ? [ofDimension.map(justCoords)] : ofDimension.map(justCoords),
+            geometries = ofDimension.map(justCoords);
             properties = ofDimension.map(justProps);
         }
         
@@ -19146,6 +19146,7 @@ module.exports = function(gj, options) {
     ]
         .forEach(function(l) {
         if (l.geometries.length && l.geometries[0].length) { 
+		console.log("geojson",l);  
             write(
                 // field definitions
                 l.properties,
